@@ -1,92 +1,58 @@
-💡 Objectives
+# 📊 Exploring Vaccine-Induced Immune Response  
+**A Simulated Clinical Dataset | R Portfolio Project**
 
-Simulate vaccine response data over time
+📄 [Click here to view the full report on RPubs](https://rpubs.com/lukahere007/vaccine-response)
 
-Explore effect of dose, comorbidities, and demographics
+---
 
-Conduct t-tests, ANOVA, and logistic regression
+## 📁 Project Structure
 
-Visualize longitudinal response with R² trend lines
+---
 
-🛠️ Tools & Libraries
+## 💡 Objectives
+- Simulate vaccine response data over time
+- Explore effect of dose, comorbidities, and demographics
+- Conduct t-tests, ANOVA, and logistic regression
+- Visualize longitudinal response with R² trend lines
 
-tidyverse for data manipulation
+---
 
-ggpubr and ggsignif for annotated boxplots
+## 🛠️ Tools & Libraries
+- `tidyverse` for data manipulation
+- `ggpubr` and `ggsignif` for annotated boxplots
+- `ggpmisc` for polynomial trendlines with R² and equations
+- `gghighlight` for exploratory emphasis
+- `broom` for tidy model output
 
-ggpmisc for polynomial trendlines with R² and equations
+---
 
-gghighlight for exploratory data emphasis
+## 📊 Analysis Summary
 
-broom for clean model output
+### ✅ Simulated Dataset:
+- 500 patients
+- Features: age, sex, BMI, comorbidity
+- Vaccine doses: Dose 1, Dose 2, Booster
+- Timepoints: Day 0, 14, 28, and 90 post-vaccination
 
-📊 Analysis Summary
+### ✅ Statistical Modeling:
+- One-way ANOVA comparing titers by dose
+- Tukey’s HSD post-hoc comparisons
+- Logistic regression to predict seropositivity (titer > 50)
 
-✅ Simulated Dataset:
+### ✅ Visualizations:
+- **Boxplot** with ANOVA + p-values
+- **Polynomial trend plot** of mean titers over time (with equations and adjusted R²)
+- **Highlight plot** of top 10% responders at Day 90
 
-500 patients
+---
 
-Age, sex, BMI, comorbidity
+## 📌 Notes
+> Perfect adjusted R² values are expected because the polynomial models were fit on mean antibody responses at fixed timepoints. This is intentional and interpretable.
 
-Vaccine dose: Dose 1, Dose 2, Booster
+---
 
-Antibody titers measured at Days 0, 14, 28, 90
+## 🚀 How to Run This Project
 
-✅ Statistical Modeling:
-
-One-way ANOVA comparing titers by dose (significant differences found)
-
-Tukey’s HSD post-hoc tests
-
-Logistic regression to predict seropositivity (titer > 50)
-
-✅ Key Visualizations:
-
-Boxplot: Antibody titers by dose with ANOVA + p-values
-
-Polynomial Plot: Mean titers over time with R² and trendlines
-
-Highlight Plot: Top 10% responders at Day 90 colored by dose
-
-📌 Notes
-
-Perfect adjusted R² values are expected because the polynomial models were fit on mean antibody responses at fixed timepoints.
-
-🚀 How to Run This Project
-
-Clone the repository:
-
-git clone https://github.com/your-username/vaccine-immune-response.git
-
-Open RStudio and run simulated_vaccine_analysis.Rmd
-
-Install any missing packages interactively when prompted
-
-👨‍💻 Author
-
-Luka WamalwaMaster's Student, Applied Statistics & Data ScienceEmail: lukewamalwa@yahoo.com
-
-🧠 Inspiration
-
-This project is inspired by real-world clinical immunogenicity studies and serves as a portfolio-friendly showcase of applied biostatistics and R visualization capabilities.
-
-✅ Future Directions
-
-Add confidence intervals and ROC analysis
-
-Expand to longitudinal mixed-effect modeling
-
-Recreate analysis in Python
-
-Deploy as a Shiny dashboard
-
-📌 License
-
-MIT License
-
- Simulated vaccine-immune-response/
-├── README.md                        # Project overview and instructions
-├── simulated_vaccine_analysis.Rmd  # R Markdown with full analysis
-├── data/
-│   └── simulated_vaccine_data.csv  # Simulated dataset
-├── plots/                          # (Optional) Folder for exported plots
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/lukahere007/vaccine-immune-response.git
