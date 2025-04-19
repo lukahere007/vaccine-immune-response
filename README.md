@@ -1,4 +1,4 @@
-vaccine-immune-response/
+Simulated vaccine-immune-response/
 ├── README.md
 ├── simulated_vaccine_analysis.Rmd
 ├── data/
