@@ -1,0 +1,309 @@
+---
+title: "Exploring Vaccine-Induced Immune Response (Simulated Data)"
+author: "Luke Wamalwa"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+
+## Project overview
+
+This project simulates a vaccine study (three dosing regimens, four timepoints) and
+analyses it with ANOVA, Tukey's HSD, logistic regression and a linear mixed model.
+
+**Important: every number here comes from simulated data.** The dose effects, the
+comorbidity penalty and the noise level are written into the simulation code below,
+so the analysis cannot "discover" anything about real vaccines. What it can do is
+show a complete design-and-analysis workflow and check a useful question:
+**do the standard methods recover the effects we know we put in?** Section 6 answers
+that directly.
+
+A companion Python version of the same simulation lives at
+[lukahere007/vaccine-simulation-python](https://github.com/lukahere007/vaccine-simulation-python).
+
+---
+
+## 1. Load required libraries
+
+All packages are on CRAN: `tidyverse`, `ggpubr`, `ggsignif`, `broom`, and `nlme`
+(ships with R).
+
+```{r libraries}
+library(tidyverse)
+library(ggpubr)
+library(ggsignif)
+library(broom)
+library(nlme)
+```
+
+---
+
+## 2. Simulate patient demographics
+
+```{r simulate-patients}
+set.seed(123)
+n <- 500
+patients <- tibble(
+  patient_id = 1:n,
+  age = round(rnorm(n, 45, 15)),
+  sex = sample(c("Male", "Female"), n, replace = TRUE),
+  bmi = round(rnorm(n, 25, 4), 1),
+  comorbidity = sample(c("None", "Hypertension", "Diabetes", "Both"),
+                       n, replace = TRUE, prob = c(0.5, 0.2, 0.2, 0.1)),
+  dose = sample(c("Dose 1", "Dose 2", "Booster"), n, replace = TRUE)
+)
+```
+
+---
+
+## 3. Simulate longitudinal antibody titers
+
+The data-generating model, per patient and timepoint, is
+
+titer = baseline ~ N(20, 5²) + slope(dose) × day − penalty ~ U(2, 5) if any comorbidity + noise ~ N(0, 10²)
+
+with slope = 0.8 (Dose 1), 1.2 (Dose 2), 1.5 (Booster). Age, sex and BMI have **no**
+effect. Two simplifications are worth stating up front, because they are not how real
+antibody data behave:
+
+* Titers rise **linearly and indefinitely** with time: there is no peak and no waning,
+  so Day 90 is always the highest timepoint.
+* Baseline and noise are drawn **independently at every timepoint**, so there is no
+  patient-level effect and repeated measurements of the same person are uncorrelated.
+
+```{r simulate-titers}
+true_slopes <- c("Dose 1" = 0.8, "Dose 2" = 1.2, "Booster" = 1.5)
+timepoints <- c(0, 14, 28, 90)
+
+sim_data <- expand.grid(patient_id = patients$patient_id, time = timepoints) %>%
+  left_join(patients, by = "patient_id") %>%
+  mutate(
+    base_titer = rnorm(nrow(.), 20, 5),
+    titer = base_titer +
+      case_when(
+        dose == "Dose 1" ~ time * 0.8,
+        dose == "Dose 2" ~ time * 1.2,
+        dose == "Booster" ~ time * 1.5
+      ) +
+      ifelse(comorbidity != "None", -runif(nrow(.), 2, 5), 0) +
+      rnorm(nrow(.), 0, 10),
+    seropositive = ifelse(titer > 50, 1, 0)
+  ) %>%
+  mutate(dose = factor(dose, levels = c("Dose 1", "Dose 2", "Booster")),
+         comorbidity = factor(comorbidity,
+                              levels = c("None", "Hypertension", "Diabetes", "Both")))
+
+if (!dir.exists("data")) dir.create("data")
+write_csv(sim_data, "data/simulated_vaccine_data.csv")
+
+sim_data %>% count(dose, time) %>% pivot_wider(names_from = time, values_from = n,
+                                               names_prefix = "Day ")
+```
+
+---
+
+## 4. Statistical analysis at Day 28
+
+Using one timepoint keeps exactly one row per patient, so ANOVA and logistic regression
+assumptions of independent observations hold. (Running ANOVA on all four timepoints
+pooled would count each patient four times; Section 6 uses a mixed model instead.)
+
+```{r day28-anova}
+day28 <- sim_data %>% filter(time == 28)
+
+anova_model <- aov(titer ~ dose, data = day28)
+summary(anova_model)
+tukey <- TukeyHSD(anova_model)
+tukey
+```
+
+```{r day28-logit}
+logit_model <- glm(seropositive ~ age + sex + bmi + comorbidity + dose,
+                   data = day28, family = binomial)
+tidy(logit_model, exponentiate = TRUE, conf.int = TRUE) %>%
+  mutate(across(where(is.numeric), ~ signif(.x, 3)))
+```
+
+**Reading these results honestly.** Dose is strongly associated with titer and with
+seropositivity, which is exactly what the simulation was built to produce. Two
+details are more instructive than the headline:
+
+* In the simulation every comorbidity category gets the *same* penalty (about 3.5
+  units). The model shows lower odds of seropositivity for all three, but Diabetes
+  (p ≈ 0.002) and Both (p ≈ 0.03) clear the 0.05 line while Hypertension (p ≈ 0.05)
+  does not. That split is sampling noise, not a difference between conditions; reading
+  it as "hypertension doesn't matter" would be wrong.
+* BMI comes out "significant" (p ≈ 0.02) even though its true effect is exactly zero.
+  With eight coefficients tested at α = 0.05, one spurious hit is unsurprising. This is
+  a useful reminder that a single p < 0.05 for a covariate nobody pre-specified should
+  not be read as a finding.
+
+---
+
+## 5. Visualizations
+
+### A. Day-28 titers by dose (Tukey-adjusted p-values)
+
+```{r boxplot}
+tk <- as.data.frame(tukey$dose) %>% rownames_to_column("pair") %>%
+  separate(pair, into = c("g2", "g1"), sep = "-") %>%
+  mutate(label = ifelse(`p adj` < 0.001, "p < 0.001", sprintf("p = %.3f", `p adj`)))
+ymax <- max(day28$titer)
+
+ggboxplot(day28, x = "dose", y = "titer", color = "dose", palette = c("#0073C2", "#EFC000", "#CD534C"),
+          add = "jitter", add.params = list(alpha = 0.4)) +
+  geom_signif(comparisons = map2(tk$g1, tk$g2, c),
+              annotations = tk$label,
+              y_position = ymax + c(5, 15, 25), tip_length = 0.01) +
+  labs(title = "Antibody titers by vaccine dose at Day 28",
+       subtitle = "Pairwise p-values from Tukey's HSD (adjusted for 3 comparisons)",
+       y = "Antibody titer", x = NULL) +
+  theme(legend.position = "none")
+```
+
+```{r save-day28_boxplot, include=FALSE}
+dir.create("figures", showWarnings = FALSE)
+ggsave("figures/day28_boxplot.png", last_plot(), width = 8, height = 5, dpi = 110, bg = "white")
+```
+
+### B. Mean titer over time vs. the simulated truth
+
+Points and error bars are the observed group means with 95% confidence intervals; dashed
+lines are the expected values implied by the simulation code. (An earlier version fitted
+quadratic curves to the four group means and reported adjusted R² ≈ 1; three parameters
+fitted to four points will always fit almost perfectly, so that R² carried no
+information and has been removed.)
+
+```{r mean-over-time}
+comorb_share <- patients %>% group_by(dose) %>%
+  summarise(p_comorb = mean(comorbidity != "None")) %>%
+  mutate(dose = factor(dose, levels = levels(sim_data$dose)))
+
+truth_lines <- expand_grid(dose = factor(names(true_slopes), levels = levels(sim_data$dose)),
+                           time = seq(0, 90, by = 1)) %>%
+  left_join(comorb_share, by = "dose") %>%
+  mutate(expected = 20 + true_slopes[as.character(dose)] * time - 3.5 * p_comorb)
+
+mean_titers <- sim_data %>%
+  group_by(dose, time) %>%
+  summarise(mean_titer = mean(titer), se = sd(titer) / sqrt(n()), .groups = "drop")
+
+ggplot(mean_titers, aes(x = time, y = mean_titer, color = dose)) +
+  geom_line(data = truth_lines, aes(y = expected), linetype = "dashed") +
+  geom_pointrange(aes(ymin = mean_titer - 1.96 * se, ymax = mean_titer + 1.96 * se),
+                  position = position_dodge(width = 3)) +
+  scale_color_manual(values = c("#0073C2", "#EFC000", "#CD534C")) +
+  labs(title = "Mean antibody response over time by dose",
+       subtitle = "Observed means +/- 95% CI; dashed = true expected value from the simulation",
+       x = "Days since vaccination", y = "Antibody titer", color = "Dose") +
+  theme_minimal()
+```
+
+```{r save-mean_titer_vs_truth, include=FALSE}
+dir.create("figures", showWarnings = FALSE)
+ggsave("figures/mean_titer_vs_truth.png", last_plot(), width = 8, height = 5, dpi = 110, bg = "white")
+```
+
+### C. Top 10% responders at Day 90
+
+```{r top-responders}
+day90 <- sim_data %>% filter(time == 90) %>%
+  mutate(top10 = titer > quantile(titer, 0.9))
+
+ggplot(day90, aes(x = age, y = titer)) +
+  geom_point(data = filter(day90, !top10), color = "grey75", size = 1.8) +
+  geom_point(data = filter(day90, top10), aes(color = dose), size = 2.4) +
+  scale_color_manual(values = c("#0073C2", "#EFC000", "#CD534C"), drop = FALSE) +
+  labs(title = "Top 10% responders at Day 90 (coloured) by dose",
+       x = "Age", y = "Antibody titer", color = "Dose") +
+  theme_minimal()
+
+day90 %>% filter(top10) %>% count(dose, name = "top10_count")
+```
+
+Top responders are mostly booster recipients and spread across all ages. Both facts are
+built into the simulation (largest slope for the booster, no age effect), so the plot
+confirms the code rather than revealing biology.
+
+---
+
+## 6. Did the analysis recover the truth?
+
+Because we know the data-generating values, we can check each estimate against them.
+The model below uses **all four timepoints**. Each patient contributes four rows, so it
+includes a random intercept per patient (`nlme::lme`) rather than treating the 2,000
+rows as independent.
+
+```{r mixed-model}
+mm_data <- sim_data %>% mutate(any_comorb = as.integer(comorbidity != "None"))
+
+mixed <- lme(titer ~ time:dose + any_comorb + age + sex + bmi,
+             random = ~ 1 | patient_id, data = mm_data, method = "REML")
+
+est <- intervals(mixed, which = "fixed")$fixed %>% as.data.frame() %>%
+  rownames_to_column("term")
+
+truth <- tribble(
+  ~term,                ~true_value,
+  "(Intercept)",        20,
+  "any_comorb",         -3.5,
+  "age",                0,
+  "sexMale",            0,
+  "bmi",                0,
+  "time:doseDose 1",    0.8,
+  "time:doseDose 2",    1.2,
+  "time:doseBooster",   1.5
+)
+
+recovery <- est %>% left_join(truth, by = "term") %>%
+  transmute(term, true_value, estimate = est., lower, upper,
+            covered = true_value >= lower & true_value <= upper) %>%
+  mutate(across(c(estimate, lower, upper), ~ round(.x, 3)))
+recovery
+```
+
+Day-28 dose differences from the ANOVA, compared with the truth (difference in slope × 28):
+
+```{r recover-day28}
+tibble(
+  comparison = rownames(tukey$dose),
+  true_diff = c(28 * (1.2 - 0.8), 28 * (1.5 - 0.8), 28 * (1.5 - 1.2)),
+  estimate = tukey$dose[, "diff"],
+  lower = tukey$dose[, "lwr"],
+  upper = tukey$dose[, "upr"]
+) %>%
+  mutate(covered = true_diff >= lower & true_diff <= upper,
+         across(c(estimate, lower, upper), ~ round(.x, 2)))
+```
+
+Variance components (truth: patient-level SD = 0, residual SD ≈ √(5² + 10²) ≈ 11.2):
+
+```{r varcomp}
+VarCorr(mixed)
+```
+
+**Takeaways**
+
+* The dose slopes are recovered almost exactly, and the intercept and the comorbidity
+  penalty have confidence intervals that cover their true values. Using all four
+  timepoints pins the comorbidity penalty down more tightly than the single-timepoint
+  logistic model.
+* The BMI false positive from Section 4 persists here (its interval just excludes zero):
+  BMI is fixed per patient, so the extra timepoints do not add independent information
+  about it. Recovering seven of eight parameters with 95% intervals is in line with what
+  95% coverage means.
+* The estimated patient-level SD is essentially zero because the simulation has no
+  within-patient correlation. Real longitudinal titers are strongly correlated within a
+  person; in that case pooling timepoints in an ordinary ANOVA/OLS would understate the
+  standard errors, which is why the mixed model (or one-row-per-patient summaries) is the
+  right default.
+* A natural next step is to make the simulation more realistic (a patient random
+  intercept, a peak followed by waning) and check that the same pipeline still recovers
+  the truth.
